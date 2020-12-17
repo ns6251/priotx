@@ -2,7 +2,7 @@ use priotx::TunDevice;
 use std::net::Ipv4Addr;
 
 fn main() -> anyhow::Result<()> {
-    let mut tun = TunDevice::new("", 4)?;
+    let mut tun = TunDevice::new("")?;
     // println!("{:#?}", tun);
 
     tun.set_addr(Ipv4Addr::new(10, 60, 0, 1))?
@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
         tun.get_netmask()?
     );
 
-    let mut tun2 = TunDevice::new("", 4)?;
+    let mut tun2 = TunDevice::new("")?;
     // println!("{:#?}", tun2);
 
     tun2.set_addr(Ipv4Addr::new(10, 60, 1, 1))?

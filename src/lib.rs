@@ -16,46 +16,36 @@ const TUNSETIFF: libc::c_ulong = 0x400454CA;
 #[derive(Debug)]
 pub struct TunDevice {
     name: String,
-    fds: Vec<File>,
+    fd: File,
 }
 
 impl TunDevice {
-    pub fn new(name: &str, queues: usize) -> io::Result<Self> {
-        let mut tun = Self {
-            name: String::new(),
-            fds: Vec::with_capacity(queues),
+    pub fn new(name: &str) -> io::Result<Self> {
+        let mut ifr = ifreq::from_name(name)?;
+        ifr.ifr_ifru.ifr_flags = (libc::IFF_TUN | libc::IFF_NO_PI) as _;
+
+        let fd = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/net/tun")?;
+
+        match unsafe {
+            libc::ioctl(
+                fd.as_raw_fd(),
+                TUNSETIFF,
+                &mut ifr as *mut ifreq as *mut libc::c_void,
+            )
+        } {
+            -1 => Err(std::io::Error::last_os_error()),
+            _ => Ok(()),
+        }?;
+
+        let tun = Self {
+            name: ifr.get_name()?,
+            fd,
         };
 
-        tun.alloc_mq(name, queues)?;
-
         Ok(tun)
-    }
-
-    fn alloc_mq(&mut self, name: &str, queues: usize) -> io::Result<()> {
-        let mut ifr = ifreq::from_name(name)?;
-        ifr.ifr_ifru.ifr_flags = (libc::IFF_TUN | libc::IFF_NO_PI | libc::IFF_MULTI_QUEUE) as _;
-
-        for _ in 0..queues {
-            let f = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open("/dev/net/tun")?;
-
-            match unsafe {
-                libc::ioctl(
-                    f.as_raw_fd(),
-                    TUNSETIFF,
-                    &mut ifr as *mut ifreq as *mut libc::c_void,
-                )
-            } {
-                -1 => Err(std::io::Error::last_os_error())?,
-                _ => self.fds.push(f),
-            };
-        }
-
-        self.name = ifr.get_name()?;
-
-        Ok(())
     }
 
     pub fn up(&self) -> io::Result<()> {
@@ -154,8 +144,8 @@ impl TunDevice {
         Ok(self)
     }
 
-    pub fn get_rawfds(&self) -> Vec<RawFd> {
-        self.fds.iter().map(AsRawFd::as_raw_fd).collect()
+    pub fn get_rawfds(&self) -> RawFd {
+        self.fd.as_raw_fd()
     }
 
     #[deprecated]
@@ -163,28 +153,29 @@ impl TunDevice {
         let mut poll = Poll::new()?;
         let mut events = Events::with_capacity(1024);
 
-        for (i, fd) in self.fds.iter().enumerate() {
-            poll.registry().register(
-                &mut SourceFd(&fd.as_raw_fd()),
-                Token(i),
-                Interest::READABLE,
-            )?;
-        }
+        poll.registry().register(
+            &mut SourceFd(&self.fd.as_raw_fd()),
+            Token(0),
+            Interest::READABLE,
+        )?;
+
         // loop {
         for _ in 0..5 {
             poll.poll(&mut events, Some(Duration::new(5, 0)))?;
             for event in &events {
-                let Token(n) = event.token();
-                let len = self.fds[n].read(buf)?;
-                let pk = MutableUdpPacket::new(buf);
-                if let Some(pk) = pk {
-                    println!("{:?}", pk);
-                    println!("{} bytes at fd({})", len, self.fds[n].as_raw_fd());
-                } else {
-                    println!("hoge!");
-                }
+                if let Token(0) = event.token() {
+                    let len = self.fd.read(buf)?;
+                    let pk = MutableUdpPacket::new(buf);
+                    if let Some(pk) = pk {
+                        println!("{:?}", pk);
+                        println!("{} bytes at fd({})", len, self.fd.as_raw_fd());
+                    } else {
+                        println!("hoge!");
+                    }
+                };
             }
         }
+
         Ok(0)
     }
 }
