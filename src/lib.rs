@@ -1,14 +1,11 @@
 use ifstructs::ifreq;
 use mio::{unix::SourceFd, Events, Interest, Poll, Token};
 use nix::libc;
-use pnet::packet::udp::MutableUdpPacket;
 use std::{
     fs::{File, OpenOptions},
     io::{self, prelude::*},
     net::{Ipv4Addr, SocketAddr, UdpSocket},
     os::unix::io::{AsRawFd, RawFd},
-    time::Duration,
-    todo,
 };
 
 const TUNSETIFF: libc::c_ulong = 0x400454CA;
@@ -144,39 +141,16 @@ impl TunDevice {
         Ok(self)
     }
 
-    pub fn get_rawfds(&self) -> RawFd {
+    pub fn get_rawfd(&self) -> RawFd {
         self.fd.as_raw_fd()
     }
 
-    #[deprecated]
     pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut poll = Poll::new()?;
-        let mut events = Events::with_capacity(1024);
+        self.fd.read(buf)
+    }
 
-        poll.registry().register(
-            &mut SourceFd(&self.fd.as_raw_fd()),
-            Token(0),
-            Interest::READABLE,
-        )?;
-
-        // loop {
-        for _ in 0..5 {
-            poll.poll(&mut events, Some(Duration::new(5, 0)))?;
-            for event in &events {
-                if let Token(0) = event.token() {
-                    let len = self.fd.read(buf)?;
-                    let pk = MutableUdpPacket::new(buf);
-                    if let Some(pk) = pk {
-                        println!("{:?}", pk);
-                        println!("{} bytes at fd({})", len, self.fd.as_raw_fd());
-                    } else {
-                        println!("hoge!");
-                    }
-                };
-            }
-        }
-
-        Ok(0)
+    pub fn write(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.fd.write(buf)
     }
 }
 
@@ -196,28 +170,59 @@ fn if_ioctl(request: libc::c_ulong, ifr: &mut ifreq) -> io::Result<()> {
 }
 
 #[derive(Debug)]
-struct Tunnel<'a> {
-    tuns: Vec<&'a TunDevice>,
+pub struct Tunnel {
+    tuns: [TunDevice; 2],
     addr: SocketAddr,
     dst: SocketAddr,
 }
 
-impl<'a> Tunnel<'a> {
-    pub fn new(tuns: &[&'a TunDevice], addr: SocketAddr, dst: SocketAddr) -> Self {
-        Self {
-            tuns: Vec::from(tuns),
-            addr,
-            dst,
-        }
+impl<'a> Tunnel {
+    pub fn new(tuns: [TunDevice; 2], addr: SocketAddr, dst: SocketAddr) -> Self {
+        Self { tuns, addr, dst }
     }
 
-    pub fn tunnel(&self) -> io::Result<()> {
+    pub fn tunnel(&mut self) -> io::Result<()> {
         let socket = UdpSocket::bind(self.addr)?;
-        // socket.set_nonblocking(true)?;
+        socket.set_nonblocking(true)?;
 
         let mut poll = Poll::new()?;
-        let mut events = Events::with_capacity(1024);
+        let mut events = Events::with_capacity(3);
 
-        todo!()
+        for i in 0..2usize {
+            poll.registry().register(
+                &mut SourceFd(&self.tuns[i].get_rawfd()),
+                Token(i),
+                Interest::READABLE,
+            )?;
+        }
+        poll.registry().register(
+            &mut SourceFd(&socket.as_raw_fd()),
+            Token(2),
+            Interest::READABLE,
+        )?;
+
+        let mut buf = [0u8; 1500];
+
+        loop {
+            poll.poll(&mut events, None)?;
+            for event in events.iter() {
+                match event.token() {
+                    Token(0) => {
+                        let len = self.tuns[0].read(&mut buf)?;
+                        let _send_len = socket.send_to(&mut buf[..len], &self.dst)?;
+                        break;
+                    }
+                    Token(1) => {
+                        let len = self.tuns[1].read(&mut buf)?;
+                        let _send_len = socket.send_to(&mut buf[..len], &self.dst)?;
+                    }
+                    Token(2) => {
+                        let (read_len, _) = socket.recv_from(&mut buf)?;
+                        let _write_len = self.tuns[0].write(&mut buf[..read_len])?;
+                    }
+                    _ => unreachable!(),
+                };
+            }
+        }
     }
 }
