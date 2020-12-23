@@ -1,6 +1,7 @@
 use ifstructs::ifreq;
 use mio::{unix::SourceFd, Events, Interest, Poll, Token};
 use nix::libc;
+use pnet::packet::ipv4::Ipv4Packet;
 use std::{
     fs::{File, OpenOptions},
     io::{self, prelude::*},
@@ -176,7 +177,7 @@ pub struct Tunnel {
     dst: SocketAddr,
 }
 
-impl<'a> Tunnel {
+impl Tunnel {
     pub fn new(tuns: [TunDevice; 2], addr: SocketAddr, dst: SocketAddr) -> Self {
         Self { tuns, addr, dst }
     }
@@ -207,22 +208,35 @@ impl<'a> Tunnel {
             poll.poll(&mut events, None)?;
             for event in events.iter() {
                 match event.token() {
-                    Token(0) => {
-                        let len = self.tuns[0].read(&mut buf)?;
-                        let _send_len = socket.send_to(&mut buf[..len], &self.dst)?;
-                        break;
-                    }
-                    Token(1) => {
-                        let len = self.tuns[1].read(&mut buf)?;
-                        let _send_len = socket.send_to(&mut buf[..len], &self.dst)?;
+                    Token(idx @ 0..=1) => {
+                        let len = self.tuns[idx].read(&mut buf)?;
+                        eprint!("read {} bytes from {}. ", len, self.tuns[idx].name);
+                        if probably_ipv4(&buf) {
+                            let send_len = socket.send_to(&mut buf[..len], &self.dst)?;
+                            eprintln!("{} bytes send.", send_len);
+                        } else {
+                            eprintln!("drop");
+                        }
                     }
                     Token(2) => {
                         let (read_len, _) = socket.recv_from(&mut buf)?;
-                        let _write_len = self.tuns[0].write(&mut buf[..read_len])?;
+                        let write_len = self.tuns[0].write(&mut buf[..read_len])?;
+                        eprintln!(
+                            "read {} bytes from socket. {} bytes wrote.",
+                            read_len, write_len
+                        );
                     }
                     _ => unreachable!(),
                 };
+                break;
             }
         }
+    }
+}
+
+fn probably_ipv4(data: &[u8]) -> bool {
+    match Ipv4Packet::new(data) {
+        Some(pkt) => pkt.get_version() == 4u8,
+        None => false,
     }
 }
