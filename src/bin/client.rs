@@ -3,7 +3,6 @@ use std::str;
 use std::{env, io};
 
 pub fn communicate(addr: &str) -> anyhow::Result<()> {
-    // let sock = UdpSocket::bind("192.0.2.1:0")?;
     let sock = UdpSocket::bind("0.0.0.0:0")?;
     loop {
         let mut input = String::new();
