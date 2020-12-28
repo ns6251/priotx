@@ -11,10 +11,10 @@ pub fn communicate(addr: &str) -> anyhow::Result<()> {
         sock.send_to(input.as_bytes(), addr)?;
 
         let mut buff = [0u8; 1024];
-        sock.recv_from(&mut buff).expect("faild to receive");
+        let (size, _) = sock.recv_from(&mut buff).expect("faild to receive");
         println!(
             "{}",
-            str::from_utf8(&buff).expect("failed to convert to String")
+            str::from_utf8(&buff[..size]).expect("failed to convert to String")
         );
     }
 }

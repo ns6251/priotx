@@ -7,7 +7,7 @@ pub fn serve(addr: &str) -> anyhow::Result<()> {
         let (size, src) = sock.recv_from(&mut buf)?;
         println!("Handling data from {}", src);
         println!("{}", str::from_utf8(&buf[..size])?);
-        sock.send_to(&buf, src)?;
+        sock.send_to(&buf[..size], src)?;
     }
 }
 
