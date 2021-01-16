@@ -1,5 +1,5 @@
 [package]
-authors = ["shortest <c0117230db@edu.teu.ac.jp>"]
+authors = ["Shota Nakagawa <c0117230db@edu.teu.ac.jp>"]
 edition = "2018"
 name = "priotx"
 version = "0.1.0"
